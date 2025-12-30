@@ -5,6 +5,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
+import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.tree.LiteralCommandNode;
@@ -13,6 +14,9 @@ import dev.xpple.simplewaypoints.api.Waypoint;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.util.BooleanFunction;
 import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
@@ -22,6 +26,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
@@ -36,6 +41,7 @@ import static net.minecraft.commands.SharedSuggestionProvider.*;
 public class WaypointCommand {
     private static final SimpleWaypointsAPI API = SimpleWaypointsAPI.getInstance();
     private static final DynamicCommandExceptionType WAYPOINT_NOT_FOUND_EXCEPTION = new DynamicCommandExceptionType(name -> Component.translatable("commands.sw:waypoint.notFound", name));
+    private static final SimpleCommandExceptionType NOT_MULTIPLAYER_EXCEPTION = new SimpleCommandExceptionType(Component.translatable("commands.sw:waypoint.notMultiplayer"));
 
     public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
         LiteralCommandNode<FabricClientCommandSource> waypointNode = dispatcher.register(literal("sw:waypoint")
@@ -83,7 +89,11 @@ public class WaypointCommand {
             .then(literal("get")
                 .then(argument("name", word())
                     .suggests((ctx, builder) -> getWaypointSuggestions(ctx, builder, WaypointSuggestions.ALL))
-                    .executes(ctx -> get(ctx.getSource(), getString(ctx, "name"))))));
+                    .executes(ctx -> get(ctx.getSource(), getString(ctx, "name")))))
+            .then(literal("identifier")
+                .then(argument("identifier", word())
+                    .suggests(WaypointCommand::getWorldIdentifierSuggestions)
+                    .executes(ctx -> identifier(ctx.getSource(), getString(ctx, "identifier"))))));
 
         API.getCommandAliases().forEach(alias -> dispatcher.register(literal(alias).redirect(waypointNode)));
     }
@@ -93,6 +103,10 @@ public class WaypointCommand {
         SHOWN,
         HIDDEN,
         ;
+    }
+
+    private static CompletableFuture<Suggestions> getWorldIdentifierSuggestions(CommandContext<FabricClientCommandSource> ctx, SuggestionsBuilder builder) {
+        return suggest(API.getWorldIdentifiers(ctx.getSource().getClient()).stream(), builder);
     }
 
     private static CompletableFuture<Suggestions> getWaypointSuggestions(CommandContext<FabricClientCommandSource> ctx, SuggestionsBuilder builder, WaypointSuggestions waypointSuggestions) {
@@ -221,6 +235,26 @@ public class WaypointCommand {
 
         source.sendFeedback(Component.translatable("commands.sw:waypoint.get", name, formatCoordinates(waypoint.location()), waypoint.dimension().identifier(), waypoint.visible() ? Component.translatable("commands.sw:waypoint.shown") : Component.translatable("commands.sw:waypoint.hidden")));
         return Command.SINGLE_SUCCESS;
+    }
+
+    private static int identifier(FabricClientCommandSource source, String identifier) throws CommandSyntaxException {
+        Minecraft minecraft = source.getClient();
+
+        if (minecraft.hasSingleplayerServer()) {
+            throw NOT_MULTIPLAYER_EXCEPTION.create();
+        }
+
+        ClientPacketListener packetListener = Objects.requireNonNull(minecraft.getConnection());
+        ServerData serverData = Objects.requireNonNull(packetListener.getServerData());
+
+        if (serverData.isRealm()) {
+            throw NOT_MULTIPLAYER_EXCEPTION.create();
+        }
+
+        String worldIdentifier = API.getWorldIdentifier(source.getClient(), false);
+        int returnValue = API.setCustomWorldIdentifier(worldIdentifier, identifier);
+        source.sendFeedback(Component.translatable("commands.sw:waypoint.identifier", identifier, worldIdentifier));
+        return returnValue;
     }
 
     private static Component formatCoordinates(BlockPos waypoint) {

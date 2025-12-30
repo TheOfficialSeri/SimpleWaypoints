@@ -36,6 +36,8 @@ public final class SimpleWaypointsImpl implements SimpleWaypointsAPI {
 
     static final Map<String, Map<String, Waypoint>> waypoints = new HashMap<>();
 
+    static final Map<String, String> customWorldIdentifiers = new HashMap<>();
+
     private static final DynamicCommandExceptionType INVALID_WAYPOINT_NAME_EXCEPTION = new DynamicCommandExceptionType(name -> Component.translatable("commands.sw:waypoint.invalidWaypointName", name));
     private static final DynamicCommandExceptionType ALREADY_EXISTS_EXCEPTION = new DynamicCommandExceptionType(name -> Component.translatable("commands.sw:waypoint.alreadyExists", name));
     private static final DynamicCommandExceptionType NOT_FOUND_EXCEPTION = new DynamicCommandExceptionType(name -> Component.translatable("commands.sw:waypoint.notFound", name));
@@ -60,6 +62,11 @@ public final class SimpleWaypointsImpl implements SimpleWaypointsAPI {
 
     @Override
     public String getWorldIdentifier(Minecraft minecraft) {
+        return getWorldIdentifier(minecraft, true);
+    }
+
+    @Override
+    public String getWorldIdentifier(Minecraft minecraft, boolean custom) {
         if (minecraft.hasSingleplayerServer()) {
             IntegratedServer singleplayerServer = Objects.requireNonNull(minecraft.getSingleplayerServer());
             // the level id remains the same even after the level is renamed
@@ -70,7 +77,13 @@ public final class SimpleWaypointsImpl implements SimpleWaypointsAPI {
         if (serverData.isRealm()) {
             return Objects.requireNonNull(minecraft.quickPlayLog().worldData).id();
         }
-        return packetListener.getConnection().getRemoteAddress().toString();
+        String worldIdentifier = packetListener.getConnection().getRemoteAddress().toString();
+        return custom ? customWorldIdentifiers.getOrDefault(worldIdentifier, worldIdentifier) : worldIdentifier;
+    }
+
+    @Override
+    public Set<String> getWorldIdentifiers(Minecraft minecraft) {
+        return waypoints.keySet();
     }
 
     @Override
@@ -209,6 +222,13 @@ public final class SimpleWaypointsImpl implements SimpleWaypointsAPI {
         }
 
         SerializationHelper.saveFile();
+        return Command.SINGLE_SUCCESS;
+    }
+
+    @Override
+    public int setCustomWorldIdentifier(String worldIdentifier, String customWorldIdentifier) throws CommandSyntaxException {
+        customWorldIdentifiers.put(worldIdentifier, customWorldIdentifier);
+
         return Command.SINGLE_SUCCESS;
     }
 }
